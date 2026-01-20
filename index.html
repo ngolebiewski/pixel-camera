@@ -7,23 +7,38 @@
 <style>
   body {
     font-family: sans-serif;
-    text-align: center;
+    background: #111;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     margin: 20px;
   }
+
+  button, select {
+    font-size: 16px;
+    margin: 5px;
+    background-color: #222;
+    color: #eee;
+    border: 1px solid #555;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  button:hover, select:hover { background-color: #333; }
 
   #camera-container {
     position: relative;
     width: 200px;
     height: 200px;
-    display: inline-block;
-    overflow: hidden; /* crop video top/bottom */
-    border: 1px solid #ccc;
+    overflow: hidden;
+    border: 2px solid #555;
+    margin: 10px 0;
   }
 
   video {
     width: 200px;
     height: 200px;
-    object-fit: cover; /* crop top/bottom to fit square */
+    object-fit: cover;
   }
 
   canvas#grid {
@@ -32,12 +47,7 @@
     left: 0;
     width: 200px;
     height: 200px;
-    pointer-events: none; /* let buttons be clickable */
-  }
-
-  button {
-    font-size: 16px;
-    margin: 5px;
+    pointer-events: none;
   }
 </style>
 </head>
@@ -45,116 +55,186 @@
 
 <h2>📸 Pixel Art Scanner</h2>
 
-<!-- Capture button at top -->
-<button id="snap">📷 Capture Sprite</button>
 <button id="startCam">▶️ Start Camera</button>
+
+<select id="paletteSelect">
+  <option value="none">No palette</option>
+  <option value="nes">NES Palette</option>
+  <option value="gameboy">Game Boy Palette</option>
+</select>
 
 <div id="camera-container">
   <video id="video" autoplay playsinline></video>
   <canvas id="grid" width="200" height="200"></canvas>
 </div>
 
+<button id="snap">📷 Capture Sprite</button>
+<button id="downloadSheet">📄 Download Spritesheet</button>
+
 <script>
 const video = document.getElementById('video');
 const gridCanvas = document.getElementById('grid');
 const gctx = gridCanvas.getContext('2d');
+const paletteSelect = document.getElementById('paletteSelect');
+
+// store captured sprites in memory
+const capturedSprites = [];
 
 // Draw 16x16 grid overlay
 function drawGrid() {
   const size = 16;
   const w = gridCanvas.width;
   const h = gridCanvas.height;
-  gctx.clearRect(0, 0, w, h);
-  gctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  gctx.lineWidth = 1;
+  gctx.clearRect(0,0,w,h);
+  gctx.strokeStyle='rgba(255,255,255,0.3)';
+  gctx.lineWidth=1;
 
-  for (let i = 1; i < size; i++) {
-    const x = (w / size) * i;
-    const y = (h / size) * i;
-
-    gctx.beginPath();
-    gctx.moveTo(x, 0);
-    gctx.lineTo(x, h);
-    gctx.stroke();
-
-    gctx.beginPath();
-    gctx.moveTo(0, y);
-    gctx.lineTo(w, y);
-    gctx.stroke();
+  for(let i=1;i<size;i++){
+    const x=(w/size)*i;
+    const y=(h/size)*i;
+    gctx.beginPath(); gctx.moveTo(x,0); gctx.lineTo(x,h); gctx.stroke();
+    gctx.beginPath(); gctx.moveTo(0,y); gctx.lineTo(w,y); gctx.stroke();
   }
 }
 drawGrid();
 
-// Tap-to-start camera (required by Safari / Firefox)
+// Start camera
 async function startCamera() {
-  if (video.srcObject) return;
-  try {
+  if(video.srcObject) return;
+  try{
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 400 },
-        height: { ideal: 400 },
-        aspectRatio: 1
+      video:{
+        facingMode:'environment',
+        width:{ideal:400},
+        height:{ideal:400},
+        aspectRatio:1
       }
     });
     video.srcObject = stream;
-  } catch (err) {
+  } catch(err){
     alert(`Camera error:\n${err.name}\n${err.message}`);
   }
 }
-document.getElementById('startCam').onclick = startCamera;
+document.getElementById('startCam').onclick=startCamera;
 
-// Auto-incrementing sprite filename
-let spriteCount = Number(localStorage.getItem('spriteCount') || 1);
+// Auto-increment filename
+let spriteCount = Number(localStorage.getItem('spriteCount')||1);
 
-// Capture sprite function
+// Palettes
+const NES_PALETTE=["#7C7C7C","#0000FC","#0000BC","#4428BC","#940084","#A80020","#A81000","#881400","#503000","#007800","#006800","#005800","#004058","#000000","#000000","#000000"];
+const GAMEBOY_PALETTE=["#0F380F","#306230","#8BAC0F","#9BBC0F"];
+
+function hexToRgb(hex){
+  const bigint=parseInt(hex.replace("#",""),16);
+  return [(bigint>>16)&255,(bigint>>8)&255, bigint&255];
+}
+
+function snapToPalette(r,g,b,palette){
+  if(!palette) return [r,g,b];
+  let minDist=Infinity, nearest=[r,g,b];
+  for(const hex of palette){
+    const [pr,pg,pb]=hexToRgb(hex);
+    const dist=(r-pr)**2+(g-pg)**2+(b-pb)**2;
+    if(dist<minDist){minDist=dist;nearest=[pr,pg,pb];}
+  }
+  return nearest;
+}
+
+// Capture sprite
 document.getElementById('snap').onclick = () => {
-  if (!video.videoWidth || !video.videoHeight) {
-    alert("Video not ready yet!");
-    return;
-  }
+  if(!video.videoWidth||!video.videoHeight){ alert("Video not ready!"); return;}
 
-  const spriteCanvas = document.createElement('canvas');
-  spriteCanvas.width = 16;
-  spriteCanvas.height = 16;
-  const ctx = spriteCanvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  const spriteCanvas=document.createElement('canvas');
+  spriteCanvas.width=16;
+  spriteCanvas.height=16;
+  const ctx=spriteCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled=false;
 
-  // Crop video to square (centered)
-  const minDim = Math.min(video.videoWidth, video.videoHeight);
-  const sx = (video.videoWidth - minDim) / 2;
-  const sy = (video.videoHeight - minDim) / 2;
+  // Crop video to square
+  const minDim=Math.min(video.videoWidth, video.videoHeight);
+  const sx=(video.videoWidth-minDim)/2;
+  const sy=(video.videoHeight-minDim)/2;
 
-  ctx.drawImage(video,
-    sx, sy, minDim, minDim, // source rectangle
-    0, 0, 16, 16            // destination rectangle
-  );
+  ctx.drawImage(video, sx,sy,minDim,minDim, 0,0,16,16);
 
-  // Make white pixels transparent (optional)
-  const imgData = ctx.getImageData(0, 0, 16, 16);
-  const data = imgData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i], g = data[i + 1], b = data[i + 2];
-    if (r > 240 && g > 240 && b > 240) {
-      data[i + 3] = 0;
+  const imgData=ctx.getImageData(0,0,16,16);
+  const data=imgData.data;
+  const paletteChoice=paletteSelect.value;
+
+  for(let i=0;i<data.length;i+=4){
+    let r=data[i], g=data[i+1], b=data[i+2];
+    // Brighten image
+    r=Math.min(255, r*1.2);
+    g=Math.min(255, g*1.2);
+    b=Math.min(255, b*1.2);
+
+    if(paletteChoice==='nes'){
+      [r,g,b]=snapToPalette(r,g,b,NES_PALETTE);
+    } else if(paletteChoice==='gameboy'){
+      // 4-level GB brightness
+      const brightness=(r+g+b)/3;
+      let level;
+      if(brightness>192) level=3;
+      else if(brightness>128) level=2;
+      else if(brightness>64) level=1;
+      else level=0;
+      const hex=GAMEBOY_PALETTE[level];
+      [r,g,b]=hexToRgb(hex);
     }
+
+    data[i]=r; data[i+1]=g; data[i+2]=b;
+
+    // Make top level / white transparent
+    if((paletteChoice==='gameboy' && (r+g+b)/3>192) || (r>240 && g>240 && b>240)) data[i+3]=0;
   }
-  ctx.putImageData(imgData, 0, 0);
+
+  ctx.putImageData(imgData,0,0);
 
   // Save PNG
-  const filename = `sprite_${String(spriteCount).padStart(3, '0')}.png`;
+  const filename=`sprite_${String(spriteCount).padStart(3,'0')}.png`;
   spriteCount++;
-  localStorage.setItem('spriteCount', spriteCount);
+  localStorage.setItem('spriteCount',spriteCount);
 
-  spriteCanvas.toBlob(blob => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
+  spriteCanvas.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  // Store in memory
+  capturedSprites.push(spriteCanvas);
+};
+
+// Download spritesheet
+document.getElementById('downloadSheet').onclick = () => {
+  if(capturedSprites.length===0){ alert("No sprites captured yet!"); return; }
+
+  const spritesPerRow = 10;
+  const spriteSize = 16;
+  const rows = Math.ceil(capturedSprites.length / spritesPerRow);
+
+  const sheetCanvas = document.createElement('canvas');
+  sheetCanvas.width = spritesPerRow * spriteSize;
+  sheetCanvas.height = rows * spriteSize;
+  const ctx = sheetCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  capturedSprites.forEach((sprite, index) => {
+    const x = (index % spritesPerRow) * spriteSize;
+    const y = Math.floor(index / spritesPerRow) * spriteSize;
+    ctx.drawImage(sprite, x, y);
+  });
+
+  sheetCanvas.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='spritesheet.png';
     a.click();
     URL.revokeObjectURL(a.href);
   });
 };
 </script>
-
 </body>
 </html>
