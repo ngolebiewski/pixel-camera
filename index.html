@@ -49,6 +49,29 @@
     height: 200px;
     pointer-events: none;
   }
+
+  #preview {
+    width: 128px;  /* 16x16 scaled 8x */
+    height: 128px;
+    image-rendering: pixelated;
+    border: 2px solid #555;
+    margin: 10px 0;
+  }
+
+  #gallery {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 10px;
+  }
+  #gallery img {
+    width: 32px;
+    height: 32px;
+    margin: 3px;
+    border: 1px solid #555;
+    image-rendering: pixelated;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -68,19 +91,26 @@
   <canvas id="grid" width="200" height="200"></canvas>
 </div>
 
+<canvas id="preview" width="16" height="16"></canvas>
+
 <button id="snap">📷 Capture Sprite</button>
 <button id="downloadSheet">📄 Download Spritesheet</button>
+
+<!-- Gallery -->
+<div id="gallery"></div>
 
 <script>
 const video = document.getElementById('video');
 const gridCanvas = document.getElementById('grid');
 const gctx = gridCanvas.getContext('2d');
 const paletteSelect = document.getElementById('paletteSelect');
+const galleryDiv = document.getElementById('gallery');
+const previewCanvas = document.getElementById('preview');
+const previewCtx = previewCanvas.getContext('2d');
+previewCtx.imageSmoothingEnabled = false;
 
-// store captured sprites in memory
 const capturedSprites = [];
 
-// Draw 16x16 grid overlay
 function drawGrid() {
   const size = 16;
   const w = gridCanvas.width;
@@ -111,6 +141,7 @@ async function startCamera() {
       }
     });
     video.srcObject = stream;
+    requestAnimationFrame(updatePreview);
   } catch(err){
     alert(`Camera error:\n${err.name}\n${err.message}`);
   }
@@ -140,6 +171,50 @@ function snapToPalette(r,g,b,palette){
   return nearest;
 }
 
+// Live preview
+function updatePreview() {
+  if(video.videoWidth && video.videoHeight) {
+    const ctx = previewCtx;
+    ctx.clearRect(0,0,16,16);
+
+    const minDim = Math.min(video.videoWidth, video.videoHeight);
+    const sx = (video.videoWidth - minDim)/2;
+    const sy = (video.videoHeight - minDim)/2;
+
+    ctx.drawImage(video, sx, sy, minDim, minDim, 0,0,16,16);
+
+    const imgData = ctx.getImageData(0,0,16,16);
+    const data = imgData.data;
+    const paletteChoice = paletteSelect.value;
+
+    for(let i=0;i<data.length;i+=4){
+      let r=data[i], g=data[i+1], b=data[i+2];
+      r=Math.min(255, r*1.2);
+      g=Math.min(255, g*1.2);
+      b=Math.min(255, b*1.2);
+
+      if(paletteChoice==='nes'){
+        [r,g,b]=snapToPalette(r,g,b,NES_PALETTE);
+      } else if(paletteChoice==='gameboy'){
+        const brightness=(r+g+b)/3;
+        let level;
+        if(brightness>192) level=3;
+        else if(brightness>128) level=2;
+        else if(brightness>64) level=1;
+        else level=0;
+        const hex=GAMEBOY_PALETTE[level];
+        [r,g,b]=hexToRgb(hex);
+      }
+
+      data[i]=r; data[i+1]=g; data[i+2]=b;
+
+      if((paletteChoice==='gameboy' && (r+g+b)/3>192) || (r>240 && g>240 && b>240)) data[i+3]=0;
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+  requestAnimationFrame(updatePreview);
+}
+
 // Capture sprite
 document.getElementById('snap').onclick = () => {
   if(!video.videoWidth||!video.videoHeight){ alert("Video not ready!"); return;}
@@ -150,7 +225,6 @@ document.getElementById('snap').onclick = () => {
   const ctx=spriteCanvas.getContext('2d');
   ctx.imageSmoothingEnabled=false;
 
-  // Crop video to square
   const minDim=Math.min(video.videoWidth, video.videoHeight);
   const sx=(video.videoWidth-minDim)/2;
   const sy=(video.videoHeight-minDim)/2;
@@ -163,7 +237,6 @@ document.getElementById('snap').onclick = () => {
 
   for(let i=0;i<data.length;i+=4){
     let r=data[i], g=data[i+1], b=data[i+2];
-    // Brighten image
     r=Math.min(255, r*1.2);
     g=Math.min(255, g*1.2);
     b=Math.min(255, b*1.2);
@@ -171,7 +244,6 @@ document.getElementById('snap').onclick = () => {
     if(paletteChoice==='nes'){
       [r,g,b]=snapToPalette(r,g,b,NES_PALETTE);
     } else if(paletteChoice==='gameboy'){
-      // 4-level GB brightness
       const brightness=(r+g+b)/3;
       let level;
       if(brightness>192) level=3;
@@ -184,27 +256,28 @@ document.getElementById('snap').onclick = () => {
 
     data[i]=r; data[i+1]=g; data[i+2]=b;
 
-    // Make top level / white transparent
     if((paletteChoice==='gameboy' && (r+g+b)/3>192) || (r>240 && g>240 && b>240)) data[i+3]=0;
   }
 
   ctx.putImageData(imgData,0,0);
 
-  // Save PNG
   const filename=`sprite_${String(spriteCount).padStart(3,'0')}.png`;
   spriteCount++;
   localStorage.setItem('spriteCount',spriteCount);
 
-  spriteCanvas.toBlob(blob=>{
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download=filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
-
-  // Store in memory
   capturedSprites.push(spriteCanvas);
+
+  // Add to gallery
+  const img = document.createElement('img');
+  img.src = spriteCanvas.toDataURL();
+  img.title = filename;
+  img.onclick = () => {
+    const a = document.createElement('a');
+    a.href = img.src;
+    a.download = filename;
+    a.click();
+  };
+  galleryDiv.appendChild(img);
 };
 
 // Download spritesheet
