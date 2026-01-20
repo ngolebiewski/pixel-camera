@@ -302,13 +302,18 @@ document.getElementById('downloadSheet').onclick = () => {
   });
 
   const dataURL = sheetCanvas.toDataURL('image/png');
-
-  // Detect mobile devices
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   if(isMobile){
-    // Mobile-friendly: open in new tab for long-press saving
-    window.open(dataURL, '_blank');
+    // Open a new tab with a full <img> element
+    const newWin = window.open();
+    newWin.document.body.style.backgroundColor = '#111';
+    const img = newWin.document.createElement('img');
+    img.src = dataURL;
+    img.style.imageRendering = 'pixelated';
+    img.style.width = '100%';
+    img.style.height = 'auto';
+    newWin.document.body.appendChild(img);
   } else {
     // Desktop: trigger real download
     const a = document.createElement('a');
@@ -319,6 +324,7 @@ document.getElementById('downloadSheet').onclick = () => {
     document.body.removeChild(a);
   }
 };
+
 </script>
 </body>
 </html>
