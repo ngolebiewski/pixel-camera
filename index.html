@@ -51,7 +51,7 @@
   }
 
   #preview {
-    width: 128px;  /* 16x16 scaled 8x */
+    width: 128px;
     height: 128px;
     image-rendering: pixelated;
     border: 2px solid #555;
@@ -111,6 +111,7 @@ previewCtx.imageSmoothingEnabled = false;
 
 const capturedSprites = [];
 
+// Draw overlay grid (optional)
 function drawGrid() {
   const size = 16;
   const w = gridCanvas.width;
@@ -280,7 +281,7 @@ document.getElementById('snap').onclick = () => {
   galleryDiv.appendChild(img);
 };
 
-// Download spritesheet
+// Download spritesheet (desktop + mobile)
 document.getElementById('downloadSheet').onclick = () => {
   if(capturedSprites.length===0){ alert("No sprites captured yet!"); return; }
 
@@ -300,13 +301,23 @@ document.getElementById('downloadSheet').onclick = () => {
     ctx.drawImage(sprite, x, y);
   });
 
-  sheetCanvas.toBlob(blob=>{
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download='spritesheet.png';
+  const dataURL = sheetCanvas.toDataURL('image/png');
+
+  // Detect mobile devices
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  if(isMobile){
+    // Mobile-friendly: open in new tab for long-press saving
+    window.open(dataURL, '_blank');
+  } else {
+    // Desktop: trigger real download
+    const a = document.createElement('a');
+    a.href = dataURL;
+    a.download = 'spritesheet.png';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
-  });
+    document.body.removeChild(a);
+  }
 };
 </script>
 </body>
