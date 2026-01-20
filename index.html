@@ -10,44 +10,56 @@
     text-align: center;
     margin: 20px;
   }
+
   #camera-container {
     position: relative;
-    display: inline-block;
-  }
-  video, canvas {
     width: 200px;
     height: 200px;
+    display: inline-block;
+    overflow: hidden; /* crop video top/bottom */
     border: 1px solid #ccc;
   }
-  canvas {
+
+  video {
+    width: 200px;
+    height: 200px;
+    object-fit: cover; /* crop top/bottom to fit square */
+  }
+
+  canvas#grid {
     position: absolute;
     top: 0;
     left: 0;
-    pointer-events: none; /* grid overlay does not block clicks */
+    width: 200px;
+    height: 200px;
+    pointer-events: none; /* let buttons be clickable */
   }
+
   button {
-    margin: 5px;
     font-size: 16px;
+    margin: 5px;
   }
 </style>
 </head>
 <body>
 
 <h2>📸 Pixel Art Scanner</h2>
+
+<!-- Capture button at top -->
+<button id="snap">📷 Capture Sprite</button>
+<button id="startCam">▶️ Start Camera</button>
+
 <div id="camera-container">
   <video id="video" autoplay playsinline></video>
   <canvas id="grid" width="200" height="200"></canvas>
 </div>
-<br>
-<button id="startCam">▶️ Start Camera</button>
-<button id="snap">📷 Capture Sprite</button>
 
 <script>
 const video = document.getElementById('video');
 const gridCanvas = document.getElementById('grid');
 const gctx = gridCanvas.getContext('2d');
 
-// Draw 16x16 overlay grid
+// Draw 16x16 grid overlay
 function drawGrid() {
   const size = 16;
   const w = gridCanvas.width;
@@ -56,27 +68,34 @@ function drawGrid() {
   gctx.strokeStyle = 'rgba(255,255,255,0.5)';
   gctx.lineWidth = 1;
 
-  for(let i=1; i<size; i++){
-    const x = (w/size)*i;
-    const y = (h/size)*i;
+  for (let i = 1; i < size; i++) {
+    const x = (w / size) * i;
+    const y = (h / size) * i;
+
     gctx.beginPath();
-    gctx.moveTo(x,0);
-    gctx.lineTo(x,h);
+    gctx.moveTo(x, 0);
+    gctx.lineTo(x, h);
     gctx.stroke();
+
     gctx.beginPath();
-    gctx.moveTo(0,y);
-    gctx.lineTo(w,y);
+    gctx.moveTo(0, y);
+    gctx.lineTo(w, y);
     gctx.stroke();
   }
 }
 drawGrid();
 
-// Start camera on button tap (required by Safari/Firefox)
+// Tap-to-start camera (required by Safari / Firefox)
 async function startCamera() {
   if (video.srcObject) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment' }
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 400 },
+        height: { ideal: 400 },
+        aspectRatio: 1
+      }
     });
     video.srcObject = stream;
   } catch (err) {
@@ -85,39 +104,51 @@ async function startCamera() {
 }
 document.getElementById('startCam').onclick = startCamera;
 
-// Capture sprite
+// Auto-incrementing sprite filename
 let spriteCount = Number(localStorage.getItem('spriteCount') || 1);
 
+// Capture sprite function
 document.getElementById('snap').onclick = () => {
+  if (!video.videoWidth || !video.videoHeight) {
+    alert("Video not ready yet!");
+    return;
+  }
+
   const spriteCanvas = document.createElement('canvas');
   spriteCanvas.width = 16;
   spriteCanvas.height = 16;
   const ctx = spriteCanvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false; // pixel perfect
+  ctx.imageSmoothingEnabled = false;
 
-  // Draw current video to 16x16 canvas
-  ctx.drawImage(video, 0, 0, 16, 16);
+  // Crop video to square (centered)
+  const minDim = Math.min(video.videoWidth, video.videoHeight);
+  const sx = (video.videoWidth - minDim) / 2;
+  const sy = (video.videoHeight - minDim) / 2;
 
-  // Optional: make white pixels transparent
+  ctx.drawImage(video,
+    sx, sy, minDim, minDim, // source rectangle
+    0, 0, 16, 16            // destination rectangle
+  );
+
+  // Make white pixels transparent (optional)
   const imgData = ctx.getImageData(0, 0, 16, 16);
   const data = imgData.data;
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i], g = data[i+1], b = data[i+2];
-    // skip eyes if you want
+    const r = data[i], g = data[i + 1], b = data[i + 2];
     if (r > 240 && g > 240 && b > 240) {
-      data[i+3] = 0; // transparent
+      data[i + 3] = 0;
     }
   }
   ctx.putImageData(imgData, 0, 0);
 
-  // Auto-increment filename
+  // Save PNG
   const filename = `sprite_${String(spriteCount).padStart(3, '0')}.png`;
   spriteCount++;
   localStorage.setItem('spriteCount', spriteCount);
 
-  spriteCanvas.toBlob(b => {
+  spriteCanvas.toBlob(blob => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(b);
+    a.href = URL.createObjectURL(blob);
     a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
